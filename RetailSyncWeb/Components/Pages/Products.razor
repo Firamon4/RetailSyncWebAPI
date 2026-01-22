@@ -1,0 +1,112 @@
+﻿@page "/products"
+@using Microsoft.EntityFrameworkCore
+@using RetailSyncWeb.Data
+@using RetailSyncWeb.Entities
+@inject AppDbContext Db
+@rendermode InteractiveServer
+
+<PageTitle>Товари та Ціни</PageTitle>
+
+<div class="container mt-4">
+    <h1>📦 Каталог товарів</h1>
+
+    <div class="input-group mb-3">
+        <input type="text" class="form-control" placeholder="Пошук за назвою або кодом..."
+               @bind="SearchTerm" @bind:event="oninput" @onkeyup="SearchData" />
+        <button class="btn btn-primary" @onclick="SearchData">🔍 Знайти</button>
+    </div>
+
+    @if (ProductList == null)
+    {
+        <p><em>Завантаження...</em></p>
+    }
+    else
+    {
+        <table class="table table-striped table-hover">
+            <thead>
+                <tr>
+                    <th>Код</th>
+                    <th>Артикул</th>
+                    <th>Назва</th>
+                    <th>Ціна (Роздріб)</th>
+                    <th>Оновлено</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in ProductList)
+                {
+                    <tr>
+                        <td>@item.Code</td>
+                        <td>@item.Articul</td>
+                        <td>
+                            @if (item.IsFolder)
+                            {
+                                <span>📁 </span>
+                            }
+                            @item.Name
+                        </td>
+                        <td>
+                            @GetPrice(item.Id)
+                        </td>
+                        <td>@item.UpdatedAt.ToShortDateString()</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private string SearchTerm = "";
+    private List<Product> ProductList = new();
+    private List<Price> PriceList = new(); // Кеш цін
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Завантажимо перші 50 товарів для старту
+        await LoadData();
+    }
+
+    private async Task SearchData()
+    {
+        if (string.IsNullOrWhiteSpace(SearchTerm))
+        {
+            await LoadData();
+            return;
+        }
+
+        // Пошук у базі
+        ProductList = await Db.Products
+            .Where(p => p.Name.Contains(SearchTerm) || p.Code.Contains(SearchTerm))
+            .Take(50)
+            .AsNoTracking()
+            .ToListAsync();
+
+        // Підвантажуємо ціни для знайдених товарів
+        var ids = ProductList.Select(p => p.Id).ToList();
+        PriceList = await Db.Prices
+            .Where(p => ids.Contains(p.ProductId))
+            .ToListAsync();
+    }
+
+    private async Task LoadData()
+    {
+        ProductList = await Db.Products
+            .OrderBy(p => p.Name)
+            .Take(50)
+            .AsNoTracking()
+            .ToListAsync();
+
+        var ids = ProductList.Select(p => p.Id).ToList();
+        PriceList = await Db.Prices
+            .Where(p => ids.Contains(p.ProductId))
+            .ToListAsync();
+    }
+
+    private string GetPrice(Guid productId)
+    {
+        // Шукаємо будь-яку ціну (можна уточнити тип ціни, якщо знаєш ID)
+        var price = PriceList.FirstOrDefault(p => p.ProductId == productId);
+        return price != null ? $"{price.Value} {price.Currency}" : "-";
+    }
+}
