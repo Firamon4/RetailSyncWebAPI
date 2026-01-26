@@ -1,0 +1,101 @@
+﻿@page "/queue"
+@using Microsoft.EntityFrameworkCore
+@using RetailSyncWeb.Data
+@using RetailSyncWeb.Entities
+@inject AppDbContext Db
+@rendermode InteractiveServer
+
+<PageTitle>Монітор черги</PageTitle>
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between">
+        <h1>📥 Вхідна черга пакетів</h1>
+        <button class="btn btn-danger" @onclick="ClearQueue">🗑 Очистити всю чергу</button>
+    </div>
+
+    <div class="alert alert-info mt-3">
+        Тут відображаються пакети, які <strong>ще не оброблені</strong>.
+        Якщо тут порожньо — значить API все встигає обробляти.
+    </div>
+
+    <button class="btn btn-primary mb-2" @onclick="LoadData">🔄 Оновити</button>
+
+    <table class="table table-bordered table-striped">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Тип даних</th>
+                <th>Джерело</th>
+                <th>Час (UTC)</th>
+                <th>Розмір (символів)</th>
+                <th>Дія</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var pkg in Packages)
+            {
+                <tr>
+                    <td>@pkg.Id</td>
+                    <td><span class="badge bg-primary">@pkg.DataType</span></td>
+                    <td>@pkg.Source</td>
+                    <td>@pkg.CreatedAtUtc.ToString("HH:mm:ss")</td>
+                    <td>@pkg.Payload.Length</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => ViewPayload(pkg.Payload)">
+                            🔍 JSON
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    @if (!string.IsNullOrEmpty(SelectedPayload))
+    {
+        <div class="card mt-4 border-primary">
+            <div class="card-header bg-primary text-white d-flex justify-content-between">
+                <span>Перегляд JSON</span>
+                <button class="btn btn-sm btn-light" @onclick="() => SelectedPayload = null">✖</button>
+            </div>
+            <div class="card-body">
+                <pre style="max-height: 300px; overflow: auto;">@SelectedPayload</pre>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<SyncPackage> Packages = new();
+    private string? SelectedPayload;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        Packages = await Db.SyncPackages.OrderBy(p => p.Id).Take(50).AsNoTracking().ToListAsync();
+    }
+
+    private void ViewPayload(string json)
+    {
+        // Робимо JSON красивим
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            SelectedPayload = System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            SelectedPayload = json;
+        }
+    }
+
+    private async Task ClearQueue()
+    {
+        // Екстрена очистка
+        await Db.Database.ExecuteSqlRawAsync("DELETE FROM SyncPackages");
+        await LoadData();
+    }
+}

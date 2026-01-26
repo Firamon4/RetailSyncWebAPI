@@ -1,0 +1,134 @@
+﻿@page "/orders"
+@using Microsoft.EntityFrameworkCore
+@using RetailSyncWeb.Data
+@using RetailSyncWeb.Entities
+@inject AppDbContext Db
+@rendermode InteractiveServer
+
+<PageTitle>Замовлення</PageTitle>
+
+<div class="container-fluid mt-4">
+    <h1>📄 Внутрішні замовлення</h1>
+
+    @if (OrdersList == null)
+    {
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    }
+    else
+    {
+        <table class="table table-hover align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th>Номер</th>
+                    <th>Дата</th>
+                    <th>Статус</th>
+                    <th>Дії</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var order in OrdersList)
+                {
+                    <tr>
+                        <td><strong>@order.Number</strong></td>
+                        <td>@order.Date.ToString("dd.MM.yyyy HH:mm")</td>
+                        <td>
+                            @if (order.IsApproved)
+                            {
+                                <span class="badge bg-success">Проведений</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-warning text-dark">Новий</span>
+                            }
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => ShowDetails(order.Id)">
+                                👁 Показати товари
+                            </button>
+                        </td>
+                    </tr>
+
+                    @if (SelectedOrderId == order.Id)
+                    {
+                        <tr>
+                            <td colspan="4" class="bg-light p-3">
+                                <h5>Склад замовлення №@order.Number:</h5>
+                                <table class="table table-sm table-bordered bg-white">
+                                    <thead>
+                                        <tr>
+                                            <th>Товар</th>
+                                            <th>Кількість</th>
+                                            <th>Ціна</th>
+                                            <th>Сума</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var item in SelectedOrderItems)
+                                        {
+                                            <tr>
+                                                <td>@GetProductName(item.ProductId)</td>
+                                                <td>@item.Count</td>
+                                                <td>@item.Price ₴</td>
+                                                <td>@(item.Count * item.Price) ₴</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    // ЗМІНЕНО НАЗВУ ЗМІННОЇ
+    private List<InternalOrder> OrdersList;
+
+    private Guid? SelectedOrderId;
+    private List<InternalOrderItem> SelectedOrderItems = new();
+
+    private Dictionary<Guid, string> ProductNames = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // ЗМІНЕНО НАЗВУ ЗМІННОЇ
+        OrdersList = await Db.InternalOrders
+            .OrderByDescending(o => o.Date)
+            .Take(20)
+            .AsNoTracking()
+            .ToListAsync();
+    }
+
+    private async Task ShowDetails(Guid orderId)
+    {
+        if (SelectedOrderId == orderId)
+        {
+            SelectedOrderId = null;
+            return;
+        }
+
+        SelectedOrderId = orderId;
+
+        SelectedOrderItems = await Db.InternalOrderItems
+            .Where(x => x.OrderId == orderId)
+            .ToListAsync();
+
+        var productIds = SelectedOrderItems.Select(x => x.ProductId).Distinct().ToList();
+        var products = await Db.Products
+            .Where(p => productIds.Contains(p.Id))
+            .Select(p => new { p.Id, p.Name })
+            .ToListAsync();
+
+        foreach (var p in products)
+        {
+            if (!ProductNames.ContainsKey(p.Id)) ProductNames[p.Id] = p.Name;
+        }
+    }
+
+    private string GetProductName(Guid id) => ProductNames.ContainsKey(id) ? ProductNames[id] : id.ToString();
+}

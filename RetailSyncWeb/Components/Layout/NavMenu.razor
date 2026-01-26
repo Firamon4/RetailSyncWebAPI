@@ -1,0 +1,54 @@
+﻿<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand d-flex align-items-center" href="">
+            <span class="bi bi-shop me-2" style="font-size: 1.5rem;"></span>
+            <strong>RetailSync</strong>
+        </a>
+    </div>
+</div>
+
+<div class="nav-scrollable">
+    <nav class="flex-column pt-3">
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link d-flex align-items-center" href="" Match="NavLinkMatch.All">
+                <span class="fs-5 me-3">📊</span> Дашборд
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link d-flex align-items-center" href="products">
+                <span class="fs-5 me-3">📦</span> Товари та Ціни
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link d-flex align-items-center" href="orders">
+                <span class="fs-5 me-3">📄</span> Замовлення
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link d-flex align-items-center" href="queue">
+                <span class="fs-5 me-3">📥</span> Черга пакетів
+            </NavLink>
+        </div>
+
+        <hr class="text-white mx-3 my-2" style="opacity: 0.3" />
+
+        <div class="nav-item px-3">
+            <span class="text-white-50 small text-uppercase px-3">Налаштування</span>
+        </div>
+    </nav>
+</div>
+
+<style>
+    .navbar-brand {
+        font-size: 1.3rem;
+        color: white !important;
+    }
+
+    .nav-link {
+        border-radius: 8px; /* Заокруглені кнопки меню */
+        padding: 10px 15px;
+    }
+</style>

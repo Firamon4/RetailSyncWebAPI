@@ -1,115 +1,124 @@
 ﻿@page "/"
 @using Microsoft.EntityFrameworkCore
+@using RetailSyncWeb.Data
+@using RetailSyncWeb.Entities
+@using RetailSyncWeb.Services
 @inject AppDbContext Db
+@inject SyncStatusService SyncState
+@implements IDisposable
 @rendermode InteractiveServer
 
 <PageTitle>Панель керування</PageTitle>
 
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>🚀 Retail Sync Dashboard</h1>
-        <button class="btn btn-primary" @onclick="LoadData">🔄 Оновити</button>
+        <h1>🚀 Real-Time Dashboard</h1>
+
+        @if (SyncState.LastAction.Contains("Очікування"))
+        {
+            <span class="badge bg-secondary p-2">💤 Сон</span>
+        }
+        else
+        {
+            <span class="badge bg-success p-2">⚡ Активність</span>
+        }
+    </div>
+
+    <div class="card mb-4 border-primary">
+        <div class="card-header bg-primary text-white">
+            📟 Live Monitor (Останнє оновлення: @SyncState.LastUpdate.ToString("HH:mm:ss"))
+        </div>
+        <div class="card-body bg-light">
+            <h4 class="text-primary">@SyncState.LastAction</h4>
+            <hr />
+            <div class="row text-center">
+                <div class="col-4">
+                    <small class="text-muted">Тип даних</small><br />
+                    <strong>@SyncState.LastPackageType</strong>
+                </div>
+                <div class="col-4">
+                    <small class="text-muted">Оброблено сесією</small><br />
+                    <strong>@SyncState.TotalProcessed</strong>
+                </div>
+                <div class="col-4">
+                    <small class="text-muted">В черзі зараз</small><br />
+                    <strong>@QueueCount</strong>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="row text-center">
         <div class="col-md-3">
-            <div class="card bg-primary text-white mb-3 shadow-sm">
+            <div class="card bg-white shadow-sm mb-3">
                 <div class="card-header">Товарів</div>
-                <div class="card-body">
-                    <h2>@ProductsCount</h2>
-                </div>
+                <div class="card-body"><h2>@ProductsCount</h2></div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card bg-success text-white mb-3 shadow-sm">
+            <div class="card bg-white shadow-sm mb-3">
                 <div class="card-header">Цін</div>
-                <div class="card-body">
-                    <h2>@PricesCount</h2>
-                </div>
+                <div class="card-body"><h2>@PricesCount</h2></div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card bg-warning text-dark mb-3 shadow-sm">
-                <div class="card-header">В черзі (Пакети)</div>
-                <div class="card-body">
-                    <h2>@QueueCount</h2>
-                </div>
+            <div class="card bg-white shadow-sm mb-3">
+                <div class="card-header">Замовлень</div>
+                <div class="card-body"><h2>@OrdersCount</h2></div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card bg-info text-white mb-3 shadow-sm">
+            <div class="card bg-white shadow-sm mb-3">
                 <div class="card-header">Працівників</div>
-                <div class="card-body">
-                    <h2>@WorkersCount</h2>
-                </div>
+                <div class="card-body"><h2>@WorkersCount</h2></div>
             </div>
         </div>
     </div>
-
-    <h3 class="mt-4">📥 Останні події від 1С</h3>
-
-    @if (RecentPackages == null)
-    {
-        <p><em>Завантаження...</em></p>
-    }
-    else
-    {
-        <div class="table-responsive">
-            <table class="table table-striped table-hover border">
-                <thead class="table-light">
-                    <tr>
-                        <th>ID</th>
-                        <th>Джерело</th>
-                        <th>Тип даних</th>
-                        <th>Час отримання (UTC)</th>
-                        <th>Розмір (байт)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var pkg in RecentPackages)
-                    {
-                        <tr>
-                            <td>@pkg.Id</td>
-                            <td>@pkg.Source</td>
-                            <td>
-                                <span class="badge bg-secondary">@pkg.DataType</span>
-                            </td>
-                            <td>@pkg.CreatedAtUtc.ToString("HH:mm:ss")</td>
-                            <td>@pkg.Payload.Length</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
-    }
 </div>
 
 @code {
     private int ProductsCount = 0;
     private int PricesCount = 0;
+    private int OrdersCount = 0;
     private int WorkersCount = 0;
     private int QueueCount = 0;
-    private List<SyncPackage> RecentPackages = new();
 
     protected override async Task OnInitializedAsync()
     {
+        // Підписуємось на подію оновлення
+        SyncState.OnChange += HandleChange;
         await LoadData();
+    }
+
+    // Цей метод спрацьовує, коли PackageProcessor кричить "Я зробив!"
+    private async void HandleChange()
+    {
+        // Оновлюємо лічильники з бази
+        await LoadData();
+
+        // Магічна команда: "Браузер, перемалюй сторінку!"
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task LoadData()
     {
-        // Прямі запити до БД (це швидко, бо це сервер)
+        // Щоб не "вбити" базу частими запитами,
+        // тут можна читати тільки SyncPackages, а решту рідше.
+        // Але для локального сервера це ОК.
+
+        // Створюємо новий контекст, бо DbContext не любить багатопоточність
+        // (Опціонально, якщо будуть помилки - треба буде інжектити IDbContextFactory)
+
+        QueueCount = await Db.SyncPackages.CountAsync();
         ProductsCount = await Db.Products.CountAsync();
         PricesCount = await Db.Prices.CountAsync();
+        OrdersCount = await Db.InternalOrders.CountAsync();
         WorkersCount = await Db.Workers.CountAsync();
-        QueueCount = await Db.SyncPackages.CountAsync();
+    }
 
-        RecentPackages = await Db.SyncPackages
-            .OrderByDescending(p => p.Id)
-            .Take(10)
-            .ToListAsync();
-
-        // Примушуємо інтерфейс оновитися (на всяк випадок)
-        StateHasChanged();
+    public void Dispose()
+    {
+        // Обов'язково відписуємось, коли йдемо зі сторінки
+        SyncState.OnChange -= HandleChange;
     }
 }

@@ -1,7 +1,90 @@
 ﻿@inherits LayoutComponentBase
 
 <div class="page">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
+
     <main>
-        @Body
+        <div class="top-row px-4 d-flex justify-content-end align-items-center">
+            <span class="text-muted me-3">Retail Sync Admin</span>
+            <a href="https://docs.microsoft.com/aspnet/" target="_blank" class="btn btn-sm btn-outline-secondary">Документація</a>
+        </div>
+
+        <article class="content px-4">
+            @Body
+        </article>
     </main>
 </div>
+
+<style>
+    .page {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        background-color: #f4f6f9; /* Світло-сірий фон для контенту */
+    }
+
+    main {
+        flex: 1;
+    }
+
+    /* === СТИЛІ БОКОВОЇ ПАНЕЛІ === */
+    .sidebar {
+        /* Гарний градієнт (Indigo -> Purple) */
+        background: linear-gradient(180deg, #1a237e 0%, #311b92 100%);
+        color: white;
+    }
+
+        /* Примусово робимо всі посилання в меню білими */
+        .sidebar ::deep a {
+            color: rgba(255, 255, 255, 0.75) !important;
+            text-decoration: none;
+            transition: 0.3s;
+        }
+
+            /* При наведенні - стає білосніжним */
+            .sidebar ::deep a:hover {
+                color: #ffffff !important;
+                background-color: rgba(255, 255, 255, 0.1);
+            }
+
+        /* Активне посилання (на якій сторінці ми зараз) */
+        .sidebar ::deep .nav-link.active {
+            background-color: rgba(255, 255, 255, 0.2);
+            color: #ffffff !important;
+            border-left: 4px solid #00bcd4; /* Блакитна смужка зліва */
+        }
+
+    /* Верхня смужка */
+    .top-row {
+        background-color: white;
+        border-bottom: 1px solid #dee2e6;
+        height: 3.5rem;
+        display: flex;
+        align-items: center;
+    }
+
+    /* Адаптивність */
+    @@media (min-width: 641px) {
+        .page {
+            flex-direction: row;
+        }
+
+        .sidebar {
+            width: 260px;
+            height: 100vh;
+            position: sticky;
+            top: 0;
+            box-shadow: 4px 0 10px rgba(0,0,0,0.1); /* Тінь справа */
+            z-index: 1000;
+        }
+
+        .top-row {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+    }
+</style>

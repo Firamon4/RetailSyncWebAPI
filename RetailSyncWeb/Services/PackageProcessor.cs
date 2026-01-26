@@ -10,11 +10,16 @@ namespace RetailSyncWeb.Services
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<PackageProcessor> _logger;
+        private readonly SyncStatusService _statusService; // <--- Для Real-Time
 
-        public PackageProcessor(IServiceProvider serviceProvider, ILogger<PackageProcessor> logger)
+        // Ігноруємо регістр літер (ProductRef vs productRef)
+        private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+        public PackageProcessor(IServiceProvider serviceProvider, ILogger<PackageProcessor> logger, SyncStatusService statusService)
         {
             _serviceProvider = serviceProvider;
             _logger = logger;
+            _statusService = statusService;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -27,9 +32,9 @@ namespace RetailSyncWeb.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Помилка при обробці пакетів");
+                    _logger.LogError(ex, "Критична помилка циклу обробки");
                 }
-                await Task.Delay(5000, stoppingToken); // Пауза 5 сек
+                await Task.Delay(2000, stoppingToken); // Пауза 2 сек
             }
         }
 
@@ -38,36 +43,64 @@ namespace RetailSyncWeb.Services
             using var scope = _serviceProvider.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            // Беремо перші 50 пакетів
             var packages = await db.SyncPackages.OrderBy(p => p.Id).Take(50).ToListAsync();
 
             foreach (var pkg in packages)
             {
-                switch (pkg.DataType)
+                // 1. Сповіщаємо Dashboard, що ми працюємо
+                _statusService.UpdateState($"Обробка пакету ID {pkg.Id}...", pkg.DataType);
+
+                try
                 {
-                    case "Product": await ProcessProducts(db, pkg.Payload); break;
-                    case "Price": await ProcessPrices(db, pkg.Payload); break;
-                    case "Remain": await ProcessStocks(db, pkg.Payload); break;
-                    case "Worker": await ProcessWorkers(db, pkg.Payload); break;
+                    switch (pkg.DataType)
+                    {
+                        case "Product": await ProcessProducts(db, pkg.Payload); break;
+                        case "Price": await ProcessPrices(db, pkg.Payload); break;
+                        case "Remain": await ProcessStocks(db, pkg.Payload); break;
+
+                        // Підтримка і старого "Users", і нового "Worker"
+                        case "Worker":
+                        case "Users": await ProcessWorkers(db, pkg.Payload); break;
+
+                        case "Shop": await ProcessStores(db, pkg.Payload); break;
+                        case "Counterparty": await ProcessCounterparties(db, pkg.Payload); break;
+                        case "Specification": await ProcessSpecifications(db, pkg.Payload); break;
+                        case "Order": await ProcessInternalOrders(db, pkg.Payload); break;
+                        case "ReturnAndComing": await ProcessTransfers(db, pkg.Payload); break;
+                    }
                 }
-                db.SyncPackages.Remove(pkg); // Видаляємо після обробки
+                catch (Exception ex)
+                {
+                    // 2. Ловимо помилку, щоб цикл не впав
+                    _logger.LogError(ex, $"Помилка в пакеті {pkg.Id}");
+                    _statusService.UpdateState($"❌ Помилка в пакеті {pkg.Id}", pkg.DataType);
+                }
+
+                // 3. Видаляємо пакет і зберігаємо, щоб не зациклитись
+                db.SyncPackages.Remove(pkg);
+                await db.SaveChangesAsync();
+
+                // Маленька затримка для красивої анімації
+                await Task.Delay(50);
             }
 
-            if (packages.Any()) await db.SaveChangesAsync();
+            if (packages.Any())
+            {
+                _statusService.UpdateState("Очікування нових даних...", "-");
+            }
         }
 
         // --- Методи розбору JSON ---
 
         private async Task ProcessProducts(AppDbContext db, string json)
         {
-            var items = JsonSerializer.Deserialize<List<ProductDto>>(json);
+            var items = JsonSerializer.Deserialize<List<ProductDto>>(json, _jsonOptions);
             if (items == null) return;
 
             foreach (var item in items)
             {
                 if (!Guid.TryParse(item.Ref, out var id)) continue;
                 var entity = await db.Products.FindAsync(id);
-
                 if (entity == null) { entity = new Product { Id = id }; db.Products.Add(entity); }
 
                 entity.Name = item.Name;
@@ -82,13 +115,14 @@ namespace RetailSyncWeb.Services
 
         private async Task ProcessPrices(AppDbContext db, string json)
         {
-            var items = JsonSerializer.Deserialize<List<PriceDto>>(json);
+            var items = JsonSerializer.Deserialize<List<PriceDto>>(json, _jsonOptions);
             if (items == null) return;
 
             foreach (var item in items)
             {
                 if (!Guid.TryParse(item.ProductRef, out var pId)) continue;
-                if (!Guid.TryParse(item.PriceTypeRef, out var tId)) continue;
+                // PriceTypeRef може бути не заповнений, перевіряємо
+                if (string.IsNullOrEmpty(item.PriceTypeRef) || !Guid.TryParse(item.PriceTypeRef, out var tId)) continue;
 
                 var entity = await db.Prices.FindAsync(pId, tId);
                 if (entity == null) { entity = new Price { ProductId = pId, PriceTypeId = tId }; db.Prices.Add(entity); }
@@ -101,7 +135,7 @@ namespace RetailSyncWeb.Services
 
         private async Task ProcessStocks(AppDbContext db, string json)
         {
-            var items = JsonSerializer.Deserialize<List<StockDto>>(json);
+            var items = JsonSerializer.Deserialize<List<StockDto>>(json, _jsonOptions);
             if (items == null) return;
 
             foreach (var item in items)
@@ -119,7 +153,7 @@ namespace RetailSyncWeb.Services
 
         private async Task ProcessWorkers(AppDbContext db, string json)
         {
-            var items = JsonSerializer.Deserialize<List<WorkerDto>>(json);
+            var items = JsonSerializer.Deserialize<List<WorkerDto>>(json, _jsonOptions);
             if (items == null) return;
 
             foreach (var item in items)
@@ -132,6 +166,130 @@ namespace RetailSyncWeb.Services
                 entity.Position = item.PositionName;
                 entity.IsActive = item.IsActual;
                 entity.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        private async Task ProcessCounterparties(AppDbContext db, string json)
+        {
+            var items = JsonSerializer.Deserialize<List<CounterpartyDto>>(json, _jsonOptions);
+            if (items == null) return;
+
+            foreach (var item in items)
+            {
+                if (!Guid.TryParse(item.Ref, out var id)) continue;
+                var entity = await db.Counterparties.FindAsync(id);
+                if (entity == null) { entity = new Counterparty { Id = id }; db.Counterparties.Add(entity); }
+
+                entity.Name = item.Name;
+                entity.Code = item.Code;
+                entity.TaxId = item.TaxId;
+                entity.IsDeleted = item.IsDeleted;
+                entity.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        private async Task ProcessStores(AppDbContext db, string json)
+        {
+            var items = JsonSerializer.Deserialize<List<StoreDto>>(json, _jsonOptions);
+            if (items == null) return;
+
+            foreach (var item in items)
+            {
+                if (!Guid.TryParse(item.Ref, out var id)) continue;
+                var entity = await db.Stores.FindAsync(id);
+                if (entity == null) { entity = new Store { Id = id }; db.Stores.Add(entity); }
+
+                entity.Name = item.Name;
+                entity.ShopNumber = item.ShopNumber;
+                entity.PriceTypeGuid = item.PriceType;
+                entity.IsDeleted = item.IsDeleted;
+                entity.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        private async Task ProcessSpecifications(AppDbContext db, string json)
+        {
+            var items = JsonSerializer.Deserialize<List<SpecificationDto>>(json, _jsonOptions);
+            if (items == null) return;
+
+            foreach (var dto in items)
+            {
+                if (!Guid.TryParse(dto.Ref, out var id)) continue;
+
+                var entity = await db.Specifications.Include(x => x.Items).FirstOrDefaultAsync(x => x.Id == id);
+                if (entity == null) { entity = new Specification { Id = id }; db.Specifications.Add(entity); }
+
+                entity.Number = dto.Number;
+                entity.Date = dto.Date;
+                entity.IsApproved = dto.IsApproved;
+                entity.IsDeleted = dto.IsDeleted;
+                if (Guid.TryParse(dto.CounterpartyRef, out var cId)) entity.CounterpartyId = cId;
+                entity.UpdatedAt = DateTime.UtcNow;
+
+                db.SpecificationItems.RemoveRange(entity.Items);
+                foreach (var row in dto.Items)
+                {
+                    if (!Guid.TryParse(row.ProductRef, out var pId)) continue;
+                    db.SpecificationItems.Add(new SpecificationItem { SpecificationId = id, ProductId = pId, Price = row.Price, Unit = row.Unit });
+                }
+            }
+        }
+
+        private async Task ProcessInternalOrders(AppDbContext db, string json)
+        {
+            var items = JsonSerializer.Deserialize<List<InternalOrderDto>>(json, _jsonOptions);
+            if (items == null) return;
+
+            foreach (var dto in items)
+            {
+                if (!Guid.TryParse(dto.Ref, out var id)) continue;
+
+                var entity = await db.InternalOrders.Include(x => x.Items).FirstOrDefaultAsync(x => x.Id == id);
+                if (entity == null) { entity = new InternalOrder { Id = id }; db.InternalOrders.Add(entity); }
+
+                entity.Number = dto.Number;
+                entity.Date = dto.Date;
+                entity.IsApproved = dto.IsApproved;
+                entity.IsDeleted = dto.IsDeleted;
+                if (Guid.TryParse(dto.CounterpartyUid, out var cId)) entity.CounterpartyId = cId;
+                entity.UpdatedAt = DateTime.UtcNow;
+
+                db.InternalOrderItems.RemoveRange(entity.Items);
+                foreach (var row in dto.Items)
+                {
+                    if (!Guid.TryParse(row.ProductRef, out var pId)) continue;
+                    db.InternalOrderItems.Add(new InternalOrderItem { OrderId = id, ProductId = pId, Price = row.Price, Count = row.Count, CountFact = row.CountFact });
+                }
+            }
+        }
+
+        private async Task ProcessTransfers(AppDbContext db, string json)
+        {
+            var items = JsonSerializer.Deserialize<List<TransferDto>>(json, _jsonOptions);
+            if (items == null) return;
+
+            foreach (var dto in items)
+            {
+                if (!Guid.TryParse(dto.Ref, out var id)) continue;
+
+                var entity = await db.Transfers.Include(x => x.Items).FirstOrDefaultAsync(x => x.Id == id);
+                if (entity == null) { entity = new Transfer { Id = id }; db.Transfers.Add(entity); }
+
+                entity.Number = dto.Number;
+                entity.DocType = dto.DocType;
+                entity.Date = dto.Date;
+                entity.IsApproved = dto.IsApproved;
+                entity.IsDeleted = dto.IsDeleted;
+                if (Guid.TryParse(dto.SenderUid, out var sId)) entity.SenderId = sId;
+                if (Guid.TryParse(dto.RecipientUid, out var rId)) entity.RecipientId = rId;
+                entity.UpdatedAt = DateTime.UtcNow;
+
+                db.TransferItems.RemoveRange(entity.Items);
+                foreach (var row in dto.Items)
+                {
+                    if (!Guid.TryParse(row.ProductRef, out var pId)) continue;
+                    db.TransferItems.Add(new TransferItem { TransferId = id, ProductId = pId, Price = row.Price, Count = row.Count, CountReceived = row.CountReceived, CountAccepted = row.CountAccepted });
+                }
             }
         }
     }

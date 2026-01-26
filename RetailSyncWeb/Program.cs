@@ -16,6 +16,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(); // Для тестування API
 
 // Реєструємо наш фоновий процесор
+builder.Services.AddSingleton<SyncStatusService>(); 
 builder.Services.AddHostedService<PackageProcessor>();
 
 var app = builder.Build();
