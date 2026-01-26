@@ -2,7 +2,8 @@
 @using Microsoft.EntityFrameworkCore
 @using RetailSyncWeb.Data
 @using RetailSyncWeb.Entities
-@inject AppDbContext Db
+@* Інжектимо фабрику *@
+@inject IDbContextFactory<AppDbContext> DbFactory
 @rendermode InteractiveServer
 
 <PageTitle>Монітор черги</PageTitle>
@@ -75,12 +76,13 @@
 
     private async Task LoadData()
     {
-        Packages = await Db.SyncPackages.OrderBy(p => p.Id).Take(50).AsNoTracking().ToListAsync();
+        // Створюємо контекст, читаємо і закриваємо
+        using var db = DbFactory.CreateDbContext();
+        Packages = await db.SyncPackages.OrderBy(p => p.Id).Take(50).AsNoTracking().ToListAsync();
     }
 
     private void ViewPayload(string json)
     {
-        // Робимо JSON красивим
         try
         {
             var doc = System.Text.Json.JsonDocument.Parse(json);
@@ -94,8 +96,8 @@
 
     private async Task ClearQueue()
     {
-        // Екстрена очистка
-        await Db.Database.ExecuteSqlRawAsync("DELETE FROM SyncPackages");
+        using var db = DbFactory.CreateDbContext();
+        await db.Database.ExecuteSqlRawAsync("DELETE FROM SyncPackages");
         await LoadData();
     }
 }

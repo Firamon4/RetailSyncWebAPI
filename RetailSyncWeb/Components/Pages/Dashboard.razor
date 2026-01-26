@@ -3,7 +3,8 @@
 @using RetailSyncWeb.Data
 @using RetailSyncWeb.Entities
 @using RetailSyncWeb.Services
-@inject AppDbContext Db
+@* ВАЖЛИВО: Інжектимо фабрику, а не сам контекст *@
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject SyncStatusService SyncState
 @implements IDisposable
 @rendermode InteractiveServer
@@ -13,7 +14,6 @@
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1>🚀 Real-Time Dashboard</h1>
-
         @if (SyncState.LastAction.Contains("Очікування"))
         {
             <span class="badge bg-secondary p-2">💤 Сон</span>
@@ -85,40 +85,34 @@
 
     protected override async Task OnInitializedAsync()
     {
-        // Підписуємось на подію оновлення
         SyncState.OnChange += HandleChange;
         await LoadData();
     }
 
-    // Цей метод спрацьовує, коли PackageProcessor кричить "Я зробив!"
     private async void HandleChange()
     {
-        // Оновлюємо лічильники з бази
-        await LoadData();
-
-        // Магічна команда: "Браузер, перемалюй сторінку!"
-        await InvokeAsync(StateHasChanged);
+        // ВАЖЛИВО: Переходимо в потік UI перед роботою з даними
+        await InvokeAsync(async () =>
+        {
+            await LoadData();
+            StateHasChanged();
+        });
     }
 
     private async Task LoadData()
     {
-        // Щоб не "вбити" базу частими запитами,
-        // тут можна читати тільки SyncPackages, а решту рідше.
-        // Але для локального сервера це ОК.
+        // ВАЖЛИВО: Створюємо короткоживучий контекст
+        using var db = DbFactory.CreateDbContext();
 
-        // Створюємо новий контекст, бо DbContext не любить багатопоточність
-        // (Опціонально, якщо будуть помилки - треба буде інжектити IDbContextFactory)
-
-        QueueCount = await Db.SyncPackages.CountAsync();
-        ProductsCount = await Db.Products.CountAsync();
-        PricesCount = await Db.Prices.CountAsync();
-        OrdersCount = await Db.InternalOrders.CountAsync();
-        WorkersCount = await Db.Workers.CountAsync();
+        QueueCount = await db.SyncPackages.CountAsync();
+        ProductsCount = await db.Products.CountAsync();
+        PricesCount = await db.Prices.CountAsync();
+        OrdersCount = await db.InternalOrders.CountAsync();
+        WorkersCount = await db.Workers.CountAsync();
     }
 
     public void Dispose()
     {
-        // Обов'язково відписуємось, коли йдемо зі сторінки
         SyncState.OnChange -= HandleChange;
     }
 }
