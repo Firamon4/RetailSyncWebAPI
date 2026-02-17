@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using RetailSyncWeb.Entities;
+using RetailSyncWeb.Models; 
 
 namespace RetailSyncWeb.Data
 {
@@ -27,8 +28,13 @@ namespace RetailSyncWeb.Data
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            // Складені ключі
             modelBuilder.Entity<Price>().HasKey(p => new { p.ProductId, p.PriceTypeId });
             modelBuilder.Entity<Stock>().HasKey(s => new { s.ProductId, s.WarehouseId });
+
+            // Індекс для швидкого пошуку нових пакетів
+            modelBuilder.Entity<SyncPackage>()
+                .HasIndex(p => p.Status);
         }
     }
 }

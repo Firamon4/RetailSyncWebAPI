@@ -24,11 +24,14 @@ builder.Services.AddHostedService<PackageProcessor>();
 
 var app = builder.Build();
 
-// 3. ІНІЦІАЛІЗАЦІЯ БАЗИ
+// 3. ІНІЦІАЛІЗАЦІЯ БАЗИ (ВИПРАВЛЕНО)
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+
+    // БУЛО: db.Database.EnsureCreated(); -> Це викликає конфлікт
+    // СТАЛО: Застосовуємо міграції автоматично при запуску
+    db.Database.Migrate();
 }
 
 // 4. НАЛАШТУВАННЯ HTTP

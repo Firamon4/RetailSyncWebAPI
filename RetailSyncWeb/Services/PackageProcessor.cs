@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using RetailSyncWeb.Data;
 using RetailSyncWeb.Entities;
+using RetailSyncWeb.Models; // Додано для SyncStatus та PackageTypes
 using RetailSyncWeb.Models.DTO;
 
 namespace RetailSyncWeb.Services
@@ -22,64 +23,107 @@ namespace RetailSyncWeb.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            _logger.LogInformation("PackageProcessor started.");
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    await ProcessQueue();
+                    bool processedAny = await ProcessQueue();
+
+                    // Якщо черга була порожня, чекаємо довше (2 сек), 
+                    // якщо ні - чекаємо менше (100 мс), щоб швидше розгребти завал.
+                    int delay = processedAny ? 100 : 2000;
+                    await Task.Delay(delay, stoppingToken);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Критична помилка циклу обробки");
+                    await Task.Delay(5000, stoppingToken); // Пауза при аварії
                 }
-                await Task.Delay(2000, stoppingToken);
             }
         }
 
-        private async Task ProcessQueue()
+        private async Task<bool> ProcessQueue()
         {
             using var scope = _serviceProvider.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            var packages = await db.SyncPackages.OrderBy(p => p.Id).Take(50).ToListAsync();
+            // --- КРОК 1: Транзакційне захоплення пакетів (Fix Race Condition) ---
+            // Ми відразу позначаємо їх як "Processing", щоб інші потоки їх не взяли.
+            using var transaction = await db.Database.BeginTransactionAsync();
 
-            foreach (var pkg in packages)
+            var packagesToProcess = await db.SyncPackages
+                .Where(p => p.Status == SyncStatus.New)
+                .OrderBy(p => p.Id)
+                .Take(50)
+                .ToListAsync();
+
+            if (!packagesToProcess.Any()) return false;
+
+            foreach (var pkg in packagesToProcess)
+            {
+                pkg.Status = SyncStatus.Processing;
+            }
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+            // -------------------------------------------------------------------
+
+            // --- КРОК 2: Обробка (вже поза транзакцією БД, щоб не блокувати таблицю надовго) ---
+            foreach (var pkg in packagesToProcess)
             {
                 _statusService.UpdateState($"Обробка пакету ID {pkg.Id}...", pkg.DataType);
 
                 try
                 {
+                    // Використовуємо константи замість магічних рядків
                     switch (pkg.DataType)
                     {
-                        case "Product": await ProcessProducts(db, pkg.Payload); break;
-                        case "Price": await ProcessPrices(db, pkg.Payload); break;
-                        case "Remain": await ProcessStocks(db, pkg.Payload); break;
-                        case "Worker":
-                        case "Users": await ProcessWorkers(db, pkg.Payload); break;
-                        case "Shop": await ProcessStores(db, pkg.Payload); break;
-                        case "Counterparty": await ProcessCounterparties(db, pkg.Payload); break;
-                        case "Specification": await ProcessSpecifications(db, pkg.Payload); break;
-                        case "Order": await ProcessInternalOrders(db, pkg.Payload); break;
-                        case "ReturnAndComing": await ProcessTransfers(db, pkg.Payload); break;
+                        case PackageTypes.Product: await ProcessProducts(db, pkg.Payload); break;
+                        case PackageTypes.Price: await ProcessPrices(db, pkg.Payload); break;
+                        case PackageTypes.Remain: await ProcessStocks(db, pkg.Payload); break;
+                        case PackageTypes.Worker:
+                        case PackageTypes.Users: await ProcessWorkers(db, pkg.Payload); break;
+                        case PackageTypes.Shop: await ProcessStores(db, pkg.Payload); break;
+                        case PackageTypes.Counterparty: await ProcessCounterparties(db, pkg.Payload); break;
+                        case PackageTypes.Specification: await ProcessSpecifications(db, pkg.Payload); break;
+                        case PackageTypes.Order: await ProcessInternalOrders(db, pkg.Payload); break;
+                        case PackageTypes.ReturnAndComing: await ProcessTransfers(db, pkg.Payload); break;
+                        default:
+                            throw new Exception($"Невідомий тип даних: {pkg.DataType}");
                     }
+
+                    // Успішне завершення
+                    pkg.Status = SyncStatus.Completed;
+                    pkg.ProcessedAtUtc = DateTime.UtcNow;
                 }
                 catch (Exception ex)
                 {
+                    // Fix Data Loss: Записуємо помилку, але не видаляємо пакет
                     _logger.LogError(ex, $"Помилка в пакеті {pkg.Id}");
                     _statusService.UpdateState($"❌ Помилка в пакеті {pkg.Id}", pkg.DataType);
+
+                    pkg.Status = SyncStatus.Error;
+                    pkg.ErrorMessage = ex.Message + (ex.InnerException != null ? $" | {ex.InnerException.Message}" : "");
+                    pkg.ProcessedAtUtc = DateTime.UtcNow;
                 }
 
-                db.SyncPackages.Remove(pkg);
-                await db.SaveChangesAsync();
-
-                await Task.Delay(50);
+                // Зберігаємо стан кожного пакету окремо (або групами, але тут окремо безпечніше)
+                // Важливо: перехоплюємо помилку збереження самого статусу
+                try
+                {
+                    await db.SaveChangesAsync();
+                }
+                catch (Exception dbEx)
+                {
+                    _logger.LogError(dbEx, $"Не вдалося зберегти статус пакету {pkg.Id}");
+                }
             }
 
-            if (packages.Any())
-            {
-                _statusService.UpdateState("Очікування нових даних...", "-");
-            }
+            _statusService.UpdateState("Очікування нових даних...", "-");
+            return true;
         }
+
+        // --- Методи обробки залишилися майже без змін, лише додано перевірки ---
 
         private async Task ProcessProducts(AppDbContext db, string json)
         {
