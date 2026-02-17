@@ -10,9 +10,7 @@ namespace RetailSyncWeb.Services
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<PackageProcessor> _logger;
-        private readonly SyncStatusService _statusService; // <--- Для Real-Time
-
-        // Ігноруємо регістр літер (ProductRef vs productRef)
+        private readonly SyncStatusService _statusService;
         private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
 
         public PackageProcessor(IServiceProvider serviceProvider, ILogger<PackageProcessor> logger, SyncStatusService statusService)
@@ -34,7 +32,7 @@ namespace RetailSyncWeb.Services
                 {
                     _logger.LogError(ex, "Критична помилка циклу обробки");
                 }
-                await Task.Delay(2000, stoppingToken); // Пауза 2 сек
+                await Task.Delay(2000, stoppingToken);
             }
         }
 
@@ -47,7 +45,6 @@ namespace RetailSyncWeb.Services
 
             foreach (var pkg in packages)
             {
-                // 1. Сповіщаємо Dashboard, що ми працюємо
                 _statusService.UpdateState($"Обробка пакету ID {pkg.Id}...", pkg.DataType);
 
                 try
@@ -57,11 +54,8 @@ namespace RetailSyncWeb.Services
                         case "Product": await ProcessProducts(db, pkg.Payload); break;
                         case "Price": await ProcessPrices(db, pkg.Payload); break;
                         case "Remain": await ProcessStocks(db, pkg.Payload); break;
-
-                        // Підтримка і старого "Users", і нового "Worker"
                         case "Worker":
                         case "Users": await ProcessWorkers(db, pkg.Payload); break;
-
                         case "Shop": await ProcessStores(db, pkg.Payload); break;
                         case "Counterparty": await ProcessCounterparties(db, pkg.Payload); break;
                         case "Specification": await ProcessSpecifications(db, pkg.Payload); break;
@@ -71,16 +65,13 @@ namespace RetailSyncWeb.Services
                 }
                 catch (Exception ex)
                 {
-                    // 2. Ловимо помилку, щоб цикл не впав
                     _logger.LogError(ex, $"Помилка в пакеті {pkg.Id}");
                     _statusService.UpdateState($"❌ Помилка в пакеті {pkg.Id}", pkg.DataType);
                 }
 
-                // 3. Видаляємо пакет і зберігаємо, щоб не зациклитись
                 db.SyncPackages.Remove(pkg);
                 await db.SaveChangesAsync();
 
-                // Маленька затримка для красивої анімації
                 await Task.Delay(50);
             }
 
@@ -89,8 +80,6 @@ namespace RetailSyncWeb.Services
                 _statusService.UpdateState("Очікування нових даних...", "-");
             }
         }
-
-        // --- Методи розбору JSON ---
 
         private async Task ProcessProducts(AppDbContext db, string json)
         {
@@ -121,7 +110,6 @@ namespace RetailSyncWeb.Services
             foreach (var item in items)
             {
                 if (!Guid.TryParse(item.ProductRef, out var pId)) continue;
-                // PriceTypeRef може бути не заповнений, перевіряємо
                 if (string.IsNullOrEmpty(item.PriceTypeRef) || !Guid.TryParse(item.PriceTypeRef, out var tId)) continue;
 
                 var entity = await db.Prices.FindAsync(pId, tId);

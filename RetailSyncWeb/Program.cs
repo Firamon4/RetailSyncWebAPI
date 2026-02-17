@@ -5,30 +5,33 @@ using RetailSyncWeb.Components;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var connectionString = "Server=localhost\\SQLEXPRESS;Database=RetailSyncDB;Trusted_Connection=True;TrustServerCertificate=True;";
+// 1. ПІДКЛЮЧЕННЯ БАЗИ
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? "Server=localhost\\SQLEXPRESS;Database=RetailSyncDB;Trusted_Connection=True;TrustServerCertificate=True;";
+builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlServer(connectionString));
 
-// ВАЖЛИВО: Замість AddDbContext використовуємо AddDbContextFactory
-builder.Services.AddDbContextFactory<AppDbContext>(options =>
-    options.UseSqlServer(connectionString));
-
+// 2. СЕРВІСИ
 builder.Services.AddControllers();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// --- ВАЖЛИВО: Реєструємо сервіс стану (Singleton) ---
 builder.Services.AddSingleton<SyncStatusService>();
+
+// --- Фоновий процесор ---
 builder.Services.AddHostedService<PackageProcessor>();
 
 var app = builder.Build();
 
-// Ініціалізація бази через фабрику
+// 3. ІНІЦІАЛІЗАЦІЯ БАЗИ
 using (var scope = app.Services.CreateScope())
 {
-    var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
-    using var db = factory.CreateDbContext();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.EnsureCreated();
 }
 
+// 4. НАЛАШТУВАННЯ HTTP
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
@@ -37,10 +40,13 @@ if (!app.Environment.IsDevelopment())
 
 app.UseSwagger();
 app.UseSwaggerUI();
+
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
+
 app.MapControllers();
-app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+app.MapRazorComponents<App>()
+    .AddInteractiveServerRenderMode();
 
 app.Run();

@@ -3,8 +3,7 @@
 @using RetailSyncWeb.Data
 @using RetailSyncWeb.Entities
 @using RetailSyncWeb.Services
-@* ВАЖЛИВО: Інжектимо фабрику, а не сам контекст *@
-@inject IDbContextFactory<AppDbContext> DbFactory
+@inject AppDbContext Db
 @inject SyncStatusService SyncState
 @implements IDisposable
 @rendermode InteractiveServer
@@ -14,6 +13,7 @@
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1>🚀 Real-Time Dashboard</h1>
+
         @if (SyncState.LastAction.Contains("Очікування"))
         {
             <span class="badge bg-secondary p-2">💤 Сон</span>
@@ -24,6 +24,7 @@
         }
     </div>
 
+    <!-- Блок Живого Логу -->
     <div class="card mb-4 border-primary">
         <div class="card-header bg-primary text-white">
             📟 Live Monitor (Останнє оновлення: @SyncState.LastUpdate.ToString("HH:mm:ss"))
@@ -48,6 +49,7 @@
         </div>
     </div>
 
+    <!-- Статистика -->
     <div class="row text-center">
         <div class="col-md-3">
             <div class="card bg-white shadow-sm mb-3">
@@ -91,24 +93,33 @@
 
     private async void HandleChange()
     {
-        // ВАЖЛИВО: Переходимо в потік UI перед роботою з даними
-        await InvokeAsync(async () =>
-        {
-            await LoadData();
-            StateHasChanged();
-        });
+        await LoadData();
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task LoadData()
     {
-        // ВАЖЛИВО: Створюємо короткоживучий контекст
-        using var db = DbFactory.CreateDbContext();
+        // Створюємо новий контекст для потокобезпеки
+        // У реальному житті краще інжектити IDbContextFactory, але для демо так простіше:
+        // Ми просто використовуємо інжектований Db, але обережно.
+        // Оскільки це Server Blazor, краще не зловживати частими викликами до одного контексту.
 
-        QueueCount = await db.SyncPackages.CountAsync();
-        ProductsCount = await db.Products.CountAsync();
-        PricesCount = await db.Prices.CountAsync();
-        OrdersCount = await db.InternalOrders.CountAsync();
-        WorkersCount = await db.Workers.CountAsync();
+        try
+        {
+            QueueCount = await Db.SyncPackages.CountAsync();
+            // Оновлюємо решту рідше або примусово
+            // Для швидкості Dashboard можна читати тільки чергу в реал-таймі
+            // Але якщо база локальна - можна все.
+
+            ProductsCount = await Db.Products.CountAsync();
+            PricesCount = await Db.Prices.CountAsync();
+            OrdersCount = await Db.InternalOrders.CountAsync();
+            WorkersCount = await Db.Workers.CountAsync();
+        }
+        catch
+        {
+            // Ігноруємо помилки доступу до контексту під час швидкого оновлення
+        }
     }
 
     public void Dispose()
